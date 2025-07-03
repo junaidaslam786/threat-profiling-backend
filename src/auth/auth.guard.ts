@@ -11,14 +11,18 @@ export class AuthGuard implements CanActivate {
   constructor(private readonly authService: AuthService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
+    console.log('AuthGuard is running!');
     const req = context.switchToHttp().getRequest();
     const authHeader = req.headers['authorization'];
-    if (!authHeader)
+    if (!authHeader) {
+      console.log('No Authorization header!');
       throw new UnauthorizedException('Missing Authorization header');
+    }
 
     const token = authHeader.replace('Bearer ', '');
     try {
       const decoded = await this.authService.verifyToken(token);
+      console.log('Token verified, decoded:', decoded);
       req.user = decoded; // Attach to request for downstream use
       return true;
     } catch (err) {
