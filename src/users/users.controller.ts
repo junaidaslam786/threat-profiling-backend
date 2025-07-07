@@ -1,38 +1,88 @@
+// src/users/users.controller.ts
 import {
   Controller,
   Post,
+  Patch,
+  Delete,
   Body,
+  Param,
   Req,
   UseGuards,
-  Param,
+  Query,
   Get,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
+import { JoinOrgRequestDto } from './dto/join-org-request.dto';
+import { InviteUserDto } from './dto/invite-user.dto';
 import { AuthGuard } from '../auth/auth.guard';
+import { ApproveJoinDto } from './dto/approve-join.dto';
 
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
-  @Get('test-log')
-  async testLog() {
-    console.log('TestLog endpoint hit!');
-    return { status: 'ok' };
-  }
-
   @Post('register')
   @UseGuards(AuthGuard)
   async register(@Body() dto: CreateUserDto, @Req() req) {
-    console.log('Register endpoint: req.user =', req.user);
-    return this.usersService.registerOrJoinOrg(dto);
+    return this.usersService.registerOrJoinOrg(dto, req.user);
+  }
+
+  @Post('join-request')
+  @UseGuards(AuthGuard)
+  async joinRequest(@Body() dto: JoinOrgRequestDto, @Req() req) {
+    return this.usersService.joinRequest(dto, req.user.email, req.user.name);
   }
 
   @Post('approve-join/:joinId')
   @UseGuards(AuthGuard)
-  async approveJoin(@Param('joinId') joinId: string, @Req() req) {
-    // req.user.email comes from Cognito
-    return this.usersService.approveJoinRequest(joinId, req.user.email);
+  async approveJoin(
+    @Param('joinId') joinId: string,
+    @Body() dto: ApproveJoinDto,
+    @Req() req,
+  ) {
+    return this.usersService.approveJoinRequest(
+      joinId,
+      req.user.email,
+      dto.role,
+    );
+  }
+
+  @Post('invite')
+  @UseGuards(AuthGuard)
+  async inviteUser(
+    @Body() dto: InviteUserDto,
+    @Query('org') org: string,
+    @Req() req,
+  ) {
+    return this.usersService.inviteUser(dto, org, req.user.email);
+  }
+
+  @Patch('role/:userId')
+  @UseGuards(AuthGuard)
+  async updateRole(
+    @Param('userId') userId: string,
+    @Query('org') org: string,
+    @Body('role') role: 'admin' | 'viewer',
+    @Req() req,
+  ) {
+    return this.usersService.updateUserRole(userId, org, role, req.user.email);
+  }
+
+  @Delete('remove/:userId')
+  @UseGuards(AuthGuard)
+  async removeUser(
+    @Param('userId') userId: string,
+    @Query('org') org: string,
+    @Req() req,
+  ) {
+    return this.usersService.removeUser(userId, org, req.user.email);
+  }
+
+  @Get('join-requests')
+  @UseGuards(AuthGuard)
+  async getJoinRequests(@Query('org') org: string, @Req() req) {
+    return this.usersService.getPendingJoinRequests(org, req.user.email);
   }
 
   @Post('me')

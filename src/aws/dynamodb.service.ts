@@ -61,28 +61,49 @@ export class DynamoDbService {
   }
 
   // Query by field (scan)
+  // src/aws/dynamodb.service.ts
   async find(tableName: string, filter: Record<string, any> = {}) {
-    // For production: use Query with index if possible, otherwise Scan
-    const params = {
+    const params: any = {
       TableName: tableName,
-      FilterExpression: undefined,
-      ExpressionAttributeNames: undefined,
-      ExpressionAttributeValues: undefined,
     };
 
-    if (Object.keys(filter).length > 0) {
-      const exprs = [];
-      const names = {};
-      const values = {};
-      for (const [k, v] of Object.entries(filter)) {
+    // If no filter provided, do a plain scan
+    if (!filter || Object.keys(filter).length === 0) {
+      const result = await this.docClient.scan(params).promise();
+      return result.Items || [];
+    }
+
+    // Otherwise, build FilterExpression
+    const exprs = [];
+    const names = {};
+    const values = {};
+
+    for (const [k, v] of Object.entries(filter)) {
+      if (Array.isArray(v)) {
+        // Supports: admins: ['userId']
+        v.forEach((val, idx) => {
+          exprs.push(`contains(#${k}, :${k}${idx})`);
+          names[`#${k}`] = k;
+          values[`:${k}${idx}`] = val;
+        });
+      } else {
         exprs.push(`#${k} = :${k}`);
         names[`#${k}`] = k;
         values[`:${k}`] = v;
       }
-      params.FilterExpression = exprs.join(' AND ');
-      params.ExpressionAttributeNames = names;
-      params.ExpressionAttributeValues = values;
     }
+
+    // If for some reason nothing got added, fall back to a plain scan
+    if (exprs.length === 0 || Object.keys(values).length === 0) {
+      const result = await this.docClient
+        .scan({ TableName: tableName })
+        .promise();
+      return result.Items || [];
+    }
+
+    params.FilterExpression = exprs.join(' AND ');
+    params.ExpressionAttributeNames = names;
+    params.ExpressionAttributeValues = values;
 
     const result = await this.docClient.scan(params).promise();
     return result.Items || [];

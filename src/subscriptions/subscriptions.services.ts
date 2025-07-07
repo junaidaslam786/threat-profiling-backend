@@ -10,19 +10,20 @@ export class SubscriptionsService {
 
   async createSubscription(dto: CreateSubscriptionDto) {
     const { client_name, tier } = dto;
-    // Build initial limits based on tier
     const limits = SUBSCRIPTION_TIERS[tier];
     await this.dynamo.insert('clients_subs', {
       client_name,
-      subscription: tier,
+      subscription_level: tier,
       run_number: 0,
       max_edits: limits.maxEdits,
       max_apps: limits.maxApps,
-      allowed_tabs: limits.allowedTabs,
+      features_access: limits.allowedTabs,
       run_quota: limits.runQuota,
+      progress: 0,
       created_at: new Date().toISOString(),
+      payment_status: 'unpaid',
     });
-    return { client_name, subscription: tier };
+    return { client_name, subscription_level: tier };
   }
 
   async getSubscription(client_name: string) {

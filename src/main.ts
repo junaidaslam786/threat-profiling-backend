@@ -20,11 +20,9 @@ async function bootstrap() {
   });
 
   // Global prefix (optional)
-  app.setGlobalPrefix('api');
+  // app.setGlobalPrefix('api');
 
   await app.listen(process.env.PORT || 3000);
-  console.log(
-    `Server started at http://localhost:${process.env.PORT || 3000}/api`,
-  );
+  console.log(`Server started at http://localhost:${process.env.PORT || 3000}`);
 }
 bootstrap();

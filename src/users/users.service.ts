@@ -12,7 +12,15 @@ import {
 } from '@nestjs/common';
 import { AwsService } from '../aws/aws.service';
 import { CreateUserDto } from './dto/create-user.dto';
-import { PutCommand, GetCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import {
+  PutCommand,
+  GetCommand,
+  UpdateCommand,
+  DeleteCommand,
+  ScanCommand,
+} from '@aws-sdk/lib-dynamodb';
+import { JoinOrgRequestDto } from './dto/join-org-request.dto';
+import { InviteUserDto } from './dto/invite-user.dto';
 
 @Injectable()
 export class UsersService {
@@ -41,7 +49,7 @@ export class UsersService {
     return emailDomain.replace(/\./g, '_');
   }
 
-  async registerOrJoinOrg(dto: CreateUserDto) {
+  async registerOrJoinOrg(dto: CreateUserDto, creator?: any) {
     // 1. Validate business email
     const emailDomain = dto.email.split('@')[1].toLowerCase();
     if (UsersService.GENERIC_DOMAINS.includes(emailDomain)) {
@@ -116,11 +124,16 @@ export class UsersService {
     }
 
     // 5. Org does not exist: Register new org and user as admin
+    // Use Cognito sub for admin if available, fallback to email
+    const adminUserId = creator?.sub || creator?.userId || dto.email;
+
     const newClient = {
       client_name: clientName,
       organization_name: clientName.replace(/_/g, '.'),
       created_at: new Date().toISOString(),
       owner_email: dto.email,
+      admins: [adminUserId], // <-- Add admin to admins array
+      viewers: [], // <-- Always initialize viewers
     };
     await this.awsService.docClient.send(
       new PutCommand({
@@ -146,12 +159,14 @@ export class UsersService {
       }),
     );
 
-    // 7. Create entry in clients_subs
+    // 7. Create entry in clients_subs (add admins/viewers for quick access if needed)
     const newSubs = {
       client_name: clientName,
       subscription_level: 'L0',
       run_quota: 0,
       progress: 0,
+      admins: [adminUserId],
+      viewers: [],
       created_at: new Date().toISOString(),
     };
     await this.awsService.docClient.send(
@@ -168,8 +183,59 @@ export class UsersService {
     };
   }
 
+  async joinRequest(
+    dto: JoinOrgRequestDto,
+    userEmail: string,
+    userName: string,
+  ) {
+    const clientName = dto.orgDomain.replace(/\./g, '_').toLowerCase();
+
+    // Validate org exists
+    const { Item: orgItem } = await this.awsService.docClient.send(
+      new GetCommand({
+        TableName: getTable('DYNAMODB_TABLE_CLIENTS_DATA'),
+        Key: { client_name: clientName },
+      }),
+    );
+    if (!orgItem) throw new NotFoundException('Organization does not exist');
+    // Create pending user if not exists
+    await this.awsService.docClient.send(
+      new PutCommand({
+        TableName: getTable('DYNAMODB_TABLE_USERS'),
+        Item: {
+          email: userEmail,
+          name: userName,
+          client_name: clientName,
+          role: 'viewer',
+          status: 'pending_approval',
+          created_at: new Date().toISOString(),
+        },
+      }),
+    );
+    // Create join request
+    await this.awsService.docClient.send(
+      new PutCommand({
+        TableName: getTable('DYNAMODB_TABLE_PENDING_JOINS'),
+        Item: {
+          join_id: `${userEmail}:${clientName}`,
+          email: userEmail,
+          name: userName,
+          client_name: clientName,
+          message: dto.message || '',
+          status: 'pending',
+          created_at: new Date().toISOString(),
+        },
+      }),
+    );
+    return { message: 'Join request sent', client_name: clientName };
+  }
+
   // For org admins to approve join requests
-  async approveJoinRequest(joinId: string, adminEmail: string) {
+  async approveJoinRequest(
+    joinId: string,
+    adminEmail: string,
+    assignedRole: 'admin' | 'viewer' | 'runner' = 'viewer',
+  ) {
     // Find join request
     const { Item: joinReq } = await this.awsService.docClient.send(
       new GetCommand({
@@ -189,14 +255,17 @@ export class UsersService {
     if (!org || org.owner_email !== adminEmail)
       throw new ForbiddenException('Only org admin can approve');
 
-    // Update user to 'active'
+    // Update user to 'active' and assign the role
     await this.awsService.docClient.send(
       new UpdateCommand({
         TableName: process.env.DYNAMODB_TABLE_USERS,
         Key: { email: joinReq.email },
-        UpdateExpression: 'SET #status = :active, #role = :viewer',
+        UpdateExpression: 'SET #status = :active, #role = :role',
         ExpressionAttributeNames: { '#status': 'status', '#role': 'role' },
-        ExpressionAttributeValues: { ':active': 'active', ':viewer': 'viewer' },
+        ExpressionAttributeValues: {
+          ':active': 'active',
+          ':role': assignedRole,
+        },
       }),
     );
     // Mark join as approved
@@ -209,7 +278,116 @@ export class UsersService {
         ExpressionAttributeValues: { ':approved': 'approved' },
       }),
     );
-    return { approved: true };
+    return { approved: true, assignedRole };
+  }
+
+  async getPendingJoinRequests(orgClientName: string, adminEmail: string) {
+    // Only allow org admin
+    const { Item: org } = await this.awsService.docClient.send(
+      new GetCommand({
+        TableName: getTable('DYNAMODB_TABLE_CLIENTS_DATA'),
+        Key: { client_name: orgClientName },
+      }),
+    );
+    if (!org || org.owner_email !== adminEmail) {
+      throw new ForbiddenException('Only org admin can view join requests');
+    }
+
+    // Scan for pending join requests for this org
+    const { Items } = await this.awsService.docClient.send(
+      new ScanCommand({
+        TableName: getTable('DYNAMODB_TABLE_PENDING_JOINS'),
+        FilterExpression: 'client_name = :clientName AND #status = :pending',
+        ExpressionAttributeNames: { '#status': 'status' },
+        ExpressionAttributeValues: {
+          ':clientName': orgClientName,
+          ':pending': 'pending',
+        },
+      }),
+    );
+    return Items || [];
+  }
+
+  async inviteUser(
+    dto: InviteUserDto,
+    orgClientName: string,
+    adminEmail: string,
+  ) {
+    // Only org admin can invite
+    const { Item: org } = await this.awsService.docClient.send(
+      new GetCommand({
+        TableName: getTable('DYNAMODB_TABLE_CLIENTS_DATA'),
+        Key: { client_name: orgClientName },
+      }),
+    );
+    if (!org || org.owner_email !== adminEmail)
+      throw new ForbiddenException('Only org admin can invite users');
+    // Pre-create user as pending
+    await this.awsService.docClient.send(
+      new PutCommand({
+        TableName: getTable('DYNAMODB_TABLE_USERS'),
+        Item: {
+          email: dto.email,
+          name: dto.name,
+          client_name: orgClientName,
+          role: 'viewer',
+          status: 'pending_approval',
+          created_at: new Date().toISOString(),
+        },
+      }),
+    );
+    // TODO: Optionally send invite email here
+    return { invited: true };
+  }
+
+  // /api/users/role/:userId
+  async updateUserRole(
+    userId: string,
+    orgClientName: string,
+    role: 'admin' | 'viewer',
+    adminEmail: string,
+  ) {
+    // Only org admin can update role
+    const { Item: org } = await this.awsService.docClient.send(
+      new GetCommand({
+        TableName: getTable('DYNAMODB_TABLE_CLIENTS_DATA'),
+        Key: { client_name: orgClientName },
+      }),
+    );
+    if (!org || org.owner_email !== adminEmail)
+      throw new ForbiddenException('Only org admin can update roles');
+    // Update user's role
+    await this.awsService.docClient.send(
+      new UpdateCommand({
+        TableName: getTable('DYNAMODB_TABLE_USERS'),
+        Key: { email: userId },
+        UpdateExpression: 'SET #role = :role',
+        ExpressionAttributeNames: { '#role': 'role' },
+        ExpressionAttributeValues: { ':role': role },
+      }),
+    );
+    return { updated: true, role };
+  }
+
+  // /api/users/remove/:userId
+  async removeUser(userId: string, orgClientName: string, adminEmail: string) {
+    // Only org admin can remove users
+    const { Item: org } = await this.awsService.docClient.send(
+      new GetCommand({
+        TableName: getTable('DYNAMODB_TABLE_CLIENTS_DATA'),
+        Key: { client_name: orgClientName },
+      }),
+    );
+    if (!org || org.owner_email !== adminEmail)
+      throw new ForbiddenException('Only org admin can remove users');
+    // Remove user
+    await this.awsService.docClient.send(
+      new DeleteCommand({
+        TableName: getTable('DYNAMODB_TABLE_USERS'),
+        Key: { email: userId },
+      }),
+    );
+    return { removed: true };
   }
 
   async getUser(email: string) {
