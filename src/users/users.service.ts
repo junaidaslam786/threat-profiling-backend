@@ -229,7 +229,6 @@ export class UsersService {
     );
     return { message: 'Join request sent', client_name: clientName };
   }
-
   // For org admins to approve join requests
   async approveJoinRequest(
     joinId: string,

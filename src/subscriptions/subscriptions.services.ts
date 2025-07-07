@@ -1,16 +1,19 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { CreateSubscriptionDto } from './dto/create-subscription.dto';
 import { UpdateSubscriptionDto } from './dto/update-subscription.dto';
-import { SUBSCRIPTION_TIERS } from './subscription-tiers';
 import { DynamoDbService } from '../aws/dynamodb.service';
+import { TiersService } from 'src/tiers/tiers.service';
 
 @Injectable()
 export class SubscriptionsService {
-  constructor(private readonly dynamo: DynamoDbService) {}
+  constructor(
+    private readonly dynamo: DynamoDbService,
+    private readonly tiersService: TiersService,
+  ) {}
 
   async createSubscription(dto: CreateSubscriptionDto) {
     const { client_name, tier } = dto;
-    const limits = SUBSCRIPTION_TIERS[tier];
+    const limits = await this.tiersService.getTier(tier);
     await this.dynamo.insert('clients_subs', {
       client_name,
       subscription_level: tier,
@@ -35,12 +38,14 @@ export class SubscriptionsService {
   async updateSubscription(client_name: string, dto: UpdateSubscriptionDto) {
     if (dto.tier) {
       // Update limits if tier is being changed
-      const limits = SUBSCRIPTION_TIERS[dto.tier];
+      const limits = await this.tiersService.getTier(dto.tier);
       Object.assign(dto, {
-        max_edits: limits.maxEdits,
-        max_apps: limits.maxApps,
-        allowed_tabs: limits.allowedTabs,
-        run_quota: limits.runQuota,
+        max_edits: limits.max_edits,
+        max_apps: limits.max_apps,
+        allowed_tabs: limits.allowed_tabs,
+        run_quota: limits.run_quota,
+        price_monthly: limits.price_monthly,
+        price_onetime_registration: limits.price_onetime_registration,
       });
     }
     return this.dynamo.update('clients_subs', client_name, dto);
@@ -48,7 +53,7 @@ export class SubscriptionsService {
 
   async checkFeatureAllowed(
     client_name: string,
-    feature: keyof (typeof SUBSCRIPTION_TIERS)['L1'],
+    feature: keyof Awaited<ReturnType<TiersService['getTier']>>,
   ) {
     const sub = await this.getSubscription(client_name);
     if (!sub) throw new NotFoundException();
