@@ -19,6 +19,10 @@ export class OrgsService {
     const exists = await this.dynamo.findById('clients_data', clientName);
     if (exists)
       throw new ForbiddenException('Org with this domain already exists');
+
+    // 🔥 Fix: always use the correct id!
+    const adminId = creator.userId || creator.sub || creator.email;
+
     await this.dynamo.insert('clients_data', {
       client_name: clientName,
       organization_name: dto.orgName,
@@ -29,9 +33,9 @@ export class OrgsService {
       home_url: dto.homeUrl,
       about_us_url: dto.aboutUsUrl,
       additional_details: dto.additionalDetails,
-      admins: [creator.userId],
+      admins: [adminId],
       viewers: [],
-      created_by: creator.userId,
+      created_by: adminId,
       created_at: new Date().toISOString(),
     });
     await this.dynamo.insert('clients_subs', {
@@ -40,7 +44,7 @@ export class OrgsService {
       run_number: 0,
       max_edits: 0,
       max_apps: 0,
-      admins: [creator.userId],
+      admins: [adminId],
       viewers: [],
       created_at: new Date().toISOString(),
     });
@@ -103,17 +107,26 @@ export class OrgsService {
 
     if (!userId) throw new BadRequestException('Missing user context');
     if (user.subscription_level === 'LE' && userId) {
+      // Master of LE orgs
       return this.dynamo.find('clients_data', { le_master: userId });
     }
-    const adminOrgs = await this.dynamo.find('clients_data', {
-      admins: userId,
-    });
-    const viewerOrgs = await this.dynamo.find('clients_data', {
-      viewers: userId,
-    });
+    // Use contains for admins and viewers (array fields)
+    const adminOrgs = await this.dynamo.findContains(
+      'clients_data',
+      'admins',
+      userId,
+    );
+    const viewerOrgs = await this.dynamo.findContains(
+      'clients_data',
+      'viewers',
+      userId,
+    );
+
+    // Remove duplicates if user is both admin and viewer
     const orgMap = {};
-    for (const org of [...adminOrgs, ...viewerOrgs])
+    for (const org of [...adminOrgs, ...viewerOrgs]) {
       orgMap[org.client_name] = org;
+    }
     return Object.values(orgMap);
   }
 

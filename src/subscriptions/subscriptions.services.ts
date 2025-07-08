@@ -1,8 +1,15 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { CreateSubscriptionDto } from './dto/create-subscription.dto';
 import { UpdateSubscriptionDto } from './dto/update-subscription.dto';
 import { DynamoDbService } from '../aws/dynamodb.service';
 import { TiersService } from 'src/tiers/tiers.service';
+
+function getTable(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing or empty env variable: ${name}`);
+  Logger.debug(`Resolving table name for ${name}: ${value}`, 'getTable');
+  return value;
+}
 
 @Injectable()
 export class SubscriptionsService {
@@ -14,7 +21,7 @@ export class SubscriptionsService {
   async createSubscription(dto: CreateSubscriptionDto) {
     const { client_name, tier } = dto;
     const limits = await this.tiersService.getTier(tier);
-    await this.dynamo.insert('clients_subs', {
+    await this.dynamo.insert(getTable('DYNAMODB_TABLE_CLIENTS_SUBS'), {
       client_name,
       subscription_level: tier,
       run_number: 0,
@@ -30,7 +37,10 @@ export class SubscriptionsService {
   }
 
   async getSubscription(client_name: string) {
-    const sub = await this.dynamo.findById('clients_subs', client_name);
+    const sub = await this.dynamo.findById(
+      getTable('DYNAMODB_TABLE_CLIENTS_SUBS'), // <-- FIXED HERE
+      client_name,
+    );
     if (!sub) throw new NotFoundException('Subscription not found');
     return sub;
   }
@@ -48,7 +58,11 @@ export class SubscriptionsService {
         price_onetime_registration: limits.price_onetime_registration,
       });
     }
-    return this.dynamo.update('clients_subs', client_name, dto);
+    return this.dynamo.update(
+      getTable('DYNAMODB_TABLE_CLIENTS_SUBS'),
+      client_name,
+      dto,
+    );
   }
 
   async checkFeatureAllowed(
@@ -61,7 +75,11 @@ export class SubscriptionsService {
   }
 
   async incrementRunNumber(client_name: string) {
-    return this.dynamo.increment('clients_subs', client_name, 'run_number');
+    return this.dynamo.increment(
+      getTable('DYNAMODB_TABLE_CLIENTS_SUBS'), // <-- FIXED HERE
+      client_name,
+      'run_number',
+    );
   }
 
   // Tier enforcement helper: called before mutating apps/fields/runs

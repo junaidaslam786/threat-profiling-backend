@@ -1,4 +1,4 @@
-import { IsEmail, IsString } from 'class-validator';
+import { IsEmail, IsNotEmpty, IsString } from 'class-validator';
 
 export class InviteUserDto {
   @IsEmail()
@@ -6,4 +6,8 @@ export class InviteUserDto {
 
   @IsString()
   name: string;
+
+  @IsString()
+  @IsNotEmpty({ message: 'Organization name is required' })
+  orgName: string;
 }

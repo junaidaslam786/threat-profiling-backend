@@ -48,14 +48,27 @@ export class UsersController {
     );
   }
 
+  // Controller should pass all required parameters
+  // Replace the existing inviteUser method with this
   @Post('invite')
   @UseGuards(AuthGuard)
-  async inviteUser(
-    @Body() dto: InviteUserDto,
-    @Query('org') org: string,
-    @Req() req,
-  ) {
-    return this.usersService.inviteUser(dto, org, req.user.email);
+  async inviteUser(@Body() dto: InviteUserDto, @Req() req: any) {
+    console.log(
+      `Invite request for org: ${dto.orgName}, user: ${req.user.email}, inviting: ${dto.email}`,
+    );
+
+    return this.usersService.inviteUser(
+      dto,
+      dto.orgName.trim(),
+      req.user.email,
+    );
+  }
+
+  // Add this new endpoint to UsersController
+  @Get('admin-orgs')
+  @UseGuards(AuthGuard)
+  async getAdminOrganizations(@Req() req) {
+    return this.usersService.getAdminOrganizations(req.user.email);
   }
 
   @Patch('role/:userId')

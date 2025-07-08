@@ -1,5 +1,5 @@
 // src/tiers/tiers.service.ts
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { TierConfigDto } from './dto/tier-config.dto';
 import { AwsService } from '../aws/aws.service';
 import {
@@ -9,9 +9,15 @@ import {
   DeleteCommand,
 } from '@aws-sdk/lib-dynamodb';
 
+function getTable(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing or empty env variable: ${name}`);
+  Logger.debug(`Resolving table name for ${name}: ${value}`, 'getTable');
+  return value;
+}
 @Injectable()
 export class TiersService {
-  private table = process.env.DYNAMODB_TABLE_TIERS_CONFIG;
+  private table = getTable('DYNAMODB_TABLE_SUBSCRIPTION_TIERS_CONFIG');
 
   constructor(private readonly awsService: AwsService) {}
 
