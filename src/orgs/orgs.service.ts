@@ -142,4 +142,17 @@ export class OrgsService {
     // Session switch would be handled via JWT/session update in real implementation.
     return { switchedTo: clientName };
   }
+
+  async getAllOrgs() {
+    // return this.dynamo.scan('clients_data');
+  }
+
+  // Platform admin: delete any org
+  async deleteOrg(clientName: string) {
+    // Also delete in subs and related if needed
+    await this.dynamo.delete('clients_data', clientName);
+    await this.dynamo.delete('clients_subs', clientName);
+    // Optionally: delete users, etc.
+    return { deleted: true };
+  }
 }
